@@ -49,7 +49,7 @@ type Streaming interface {
 }
 
 // Stream implements the Streaming interface
-func (kc *kClient) Stream(ctx context.Context, method string, request, response interface{}) error {
+func (kc *kClient) Stream(ctx context.Context, method string, request, response interface{}) (err error) {
 	if !kc.inited {
 		panic("client not initialized")
 	}
@@ -64,7 +64,6 @@ func (kc *kClient) Stream(ctx context.Context, method string, request, response 
 
 	ctx = kc.opt.TracerCtl.DoStart(ctx, ri)
 	var reportErr error
-	var err error
 	var cs streaming.ClientStream
 	defer func() {
 		if panicInfo := recover(); panicInfo != nil {
@@ -113,7 +112,7 @@ func (kc *kClient) Stream(ctx context.Context, method string, request, response 
 }
 
 // StreamX implements the Streaming interface
-func (kc *kClient) StreamX(ctx context.Context, method string) (streaming.ClientStream, error) {
+func (kc *kClient) StreamX(ctx context.Context, method string) (cs streaming.ClientStream, err error) {
 	if !kc.inited {
 		panic("client not initialized")
 	}
@@ -128,8 +127,6 @@ func (kc *kClient) StreamX(ctx context.Context, method string) (streaming.Client
 
 	ctx = kc.opt.TracerCtl.DoStart(ctx, ri)
 	var reportErr error
-	var err error
-	var cs streaming.ClientStream
 	defer func() {
 		if panicInfo := recover(); panicInfo != nil {
 			err = rpcinfo.ClientPanicToErr(ctx, panicInfo, ri, false)
