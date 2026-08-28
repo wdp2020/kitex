@@ -17,8 +17,13 @@
 package generic
 
 import (
+	"context"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/cloudwego/thriftgo/parser"
 
 	"github.com/cloudwego/kitex/internal/test"
 	"github.com/cloudwego/kitex/pkg/generic/thrift"
@@ -420,6 +425,85 @@ func TestGoTagMapperForDynamicGoIsIsolated(t *testing.T) {
 	handleGoTagForDynamicGo(&enabledOpts, &goTagOption{isGoTagAliasDisabled: false})
 	test.Assert(t, enabledOpts.FindAnnotationMapper("go.tag", dthrift.AnnoScopeField) != nil)
 	test.Assert(t, disabledOpts.FindAnnotationMapper("go.tag", dthrift.AnnoScopeField) == nil)
+}
+
+type customGoTagMapper struct {
+	alias string
+}
+
+func (m customGoTagMapper) Map(context.Context, []parser.Annotation, interface{}, dthrift.Options) ([]parser.Annotation, []parser.Annotation, error) {
+	return []parser.Annotation{{Key: "api.key", Values: []string{m.alias}}}, nil, nil
+}
+
+func dynamicGoRequestFieldAlias(t *testing.T, opts ...ThriftIDLProviderOption) string {
+	t.Helper()
+	p, err := NewThriftContentProviderWithDynamicGo(testServiceContent, nil, opts...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer p.Close()
+	tree := <-p.Provide()
+	if tree == nil || tree.DynamicGoDsc == nil {
+		t.Fatal("dynamicgo descriptor is nil")
+	}
+	return tree.DynamicGoDsc.Functions()["Example2Method"].Request().Struct().FieldByKey("req").Type().Struct().FieldById(1).Alias()
+}
+
+func TestDynamicGoOptionsPreserveGoTagMapper(t *testing.T) {
+	removedOpts := dthrift.Options{}
+	removedOpts.RemoveAnnotationMapper(dthrift.AnnoScopeField, "go.tag")
+	test.Assert(t, dynamicGoRequestFieldAlias(t, WithDynamicGoOptions(&removedOpts)) == "Msg")
+	test.Assert(t, dynamicGoRequestFieldAlias(t, WithDynamicGoOptions(&removedOpts), WithGoTagDisabled(false)) == "message")
+
+	customOpts := dthrift.Options{}
+	customOpts.RegisterAnnotationMapper(dthrift.AnnoScopeField, customGoTagMapper{alias: "custom_message"}, "go.tag")
+	test.Assert(t, dynamicGoRequestFieldAlias(t, WithDynamicGoOptions(&customOpts)) == "custom_message")
+	test.Assert(t, dynamicGoRequestFieldAlias(t, WithDynamicGoOptions(&customOpts), WithGoTagDisabled(false)) == "custom_message")
+	test.Assert(t, dynamicGoRequestFieldAlias(t, WithDynamicGoOptions(&customOpts), WithGoTagDisabled(true)) == "Msg")
+}
+
+func TestDynamicGoOptionsGoTagMapperConcurrentProviders(t *testing.T) {
+	baseOpts := dthrift.Options{}
+	baseOpts.RegisterAnnotationMapper(dthrift.AnnoScopeField, customGoTagMapper{alias: "custom_message"}, "go.tag")
+
+	const workers = 20
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(disabled bool) {
+			defer wg.Done()
+			p, err := NewThriftContentProviderWithDynamicGo(testServiceContent, nil,
+				WithDynamicGoOptions(&baseOpts), WithGoTagDisabled(disabled))
+			if err != nil {
+				errCh <- err
+				return
+			}
+			defer p.Close()
+			tree := <-p.Provide()
+			if tree == nil || tree.DynamicGoDsc == nil {
+				errCh <- fmt.Errorf("dynamicgo descriptor is nil")
+				return
+			}
+			got := tree.DynamicGoDsc.Functions()["Example2Method"].Request().Struct().FieldByKey("req").Type().Struct().FieldById(1).Alias()
+			want := "custom_message"
+			if disabled {
+				want = "Msg"
+			}
+			if got != want {
+				errCh <- fmt.Errorf("unexpected field alias: got %q, want %q", got, want)
+			}
+		}(i%2 == 0)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	test.Assert(t, dynamicGoRequestFieldAlias(t, WithDynamicGoOptions(&baseOpts)) == "custom_message")
 }
 
 func TestFileProviderParseMode(t *testing.T) {

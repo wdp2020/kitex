@@ -546,13 +546,15 @@ func newDynamicGoDscFromContent(svc *descriptor.ServiceDescriptor, path, content
 }
 
 func handleGoTagForDynamicGo(dOpts *dthrift.Options, goTagOpt *goTagOption) {
-	shouldRemove := isGoTagAliasDisabled
-	if goTagOpt != nil {
-		shouldRemove = goTagOpt.isGoTagAliasDisabled
+	if goTagOpt == nil {
+		if isGoTagAliasDisabled {
+			dOpts.RemoveAnnotationMapper(dthrift.AnnoScopeField, "go.tag")
+		}
+		return
 	}
-	if shouldRemove {
+	if goTagOpt.isGoTagAliasDisabled {
 		dOpts.RemoveAnnotationMapper(dthrift.AnnoScopeField, "go.tag")
-	} else {
+	} else if dOpts.FindAnnotationMapper("go.tag", dthrift.AnnoScopeField) == nil {
 		dOpts.RegisterAnnotationMapper(dthrift.AnnoScopeField, goTagMapper, "go.tag")
 	}
 }
